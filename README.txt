@@ -1,4 +1,4 @@
-Initial commit of the Masterchest Library.
+Initial ALPHA commit of the Masterchest Library.
 
 This is a .NET DLL that can be referenced in a project and used to perform Mastercoin functions.
 
