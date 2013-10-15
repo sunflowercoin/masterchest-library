@@ -179,6 +179,7 @@ Public Class mlib
     Public Class btcaddressbal
         Public address As String
         Public amount As Double
+        Public uamount As Double
     End Class
 
     '////////////
@@ -662,7 +663,7 @@ Public Class mlib
             plainaddresslist.Add(result.address.ToString)
         Next
         'since documentation is wrong and this does not list all addresses (eg change), use listunspent to gather up any addresses not returned by listreceivedbyaddress
-        Dim listunspent As unspent = JsonConvert.DeserializeObject(Of unspent)(rpccall(bitcoin_con, "listunspent", 2, 1, 999999, 0))
+        Dim listunspent As unspent = JsonConvert.DeserializeObject(Of unspent)(rpccall(bitcoin_con, "listunspent", 2, 0, 999999, 0))
         For Each result In listunspent.result
             If Not plainaddresslist.Contains(result.address.ToString) Then 'avoid duplicates
                 plainaddresslist.Add(result.address.ToString)
@@ -671,14 +672,20 @@ Public Class mlib
         'loop through plainaddresslist and get balances to create addresslist object
         For Each address In plainaddresslist
             Dim addressbal As Double = 0
+            Dim uaddressbal As Double = 0
             For Each result In listunspent.result
                 If result.address.ToString = address.ToString Then
-                    addressbal = addressbal + result.amount
+                    If result.confirmations = 0 Then
+                        uaddressbal = uaddressbal + result.amount
+                    Else
+                        addressbal = addressbal + result.amount
+                    End If
                 End If
             Next
             Dim addressobj As New btcaddressbal
             addressobj.address = address.ToString
             addressobj.amount = addressbal
+            addressobj.uamount = uaddressbal
             addresslist.Add(addressobj)
         Next
 
