@@ -6,6 +6,7 @@ Imports System.Net
 Imports System.Text
 Imports System.IO
 Imports Org.BouncyCastle.Math.EC
+Imports System.Security.Cryptography
 
 Public Class mlib
     '/////////////
@@ -13,6 +14,7 @@ Public Class mlib
     '/////////////
     Public publickeybytes As Byte()
     Public multisig As Boolean
+    Dim isvalidtx As Boolean
     Public Class bitcoinrpcconnection
         Public bitcoinrpcserver As String
         Public bitcoinrpcport As Integer
@@ -411,155 +413,222 @@ Public Class mlib
             If txinputs > 0 Then
                 multisig = False
                 Dim vouts() As Vout = tx.result.vout.ToArray
-                'loop through each output and find the exodus address
-                For i = 0 To UBound(vouts)
-                    Try
-                        If vouts(i).scriptPubKey.addresses(0).ToString = "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
-                            exoamount = vouts(i).value 'amount of msc fee
-                        End If
-                    Catch e As Exception
-                        MsgBox("Exception thrown : " & e.Message)
-                    End Try
-                Next
-                'loop through and find the remainder of output addresses
-                Dim outputs As New DataTable
-                outputs.Columns.Add("Address", GetType(String))
-                outputs.Columns.Add("Amount", GetType(Long))
-                outputs.Columns.Add("Seqnum", GetType(Integer))
+                If UBound(vouts) > 0 Then 'we have outputs to work if
+                    'loop through each output and find the exodus address
+                    For i = 0 To UBound(vouts)
+                        Try
+                            If vouts(i).scriptPubKey.addresses(0).ToString = "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
+                                exoamount = vouts(i).value 'amount of msc fee
+                            End If
+                        Catch e As Exception
+                            MsgBox("Exception thrown detecting fee amounts: " & e.Message)
+                        End Try
+                    Next
+                    'loop through and find the remainder of output addresses
+                    Dim outputs As New DataTable
+                    outputs.Columns.Add("Address", GetType(String))
+                    outputs.Columns.Add("Amount", GetType(Double))
+                    outputs.Columns.Add("Seqnum", GetType(Integer))
 
-                For i = 0 To UBound(vouts)
-                    Try
-                        If vouts(i).scriptPubKey.type = "multisig" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
-                            multisig = True
-                            Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
-                            pubkeyhex = asmvars(2)
+                    For i = 0 To UBound(vouts)
+                        Try
+                            If vouts(i).scriptPubKey.type = "multisig" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
+                                multisig = True
+                                Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
+                                pubkeyhex = asmvars(2)
+                            End If
+                            If vouts(i).scriptPubKey.type = "pubkeyhash" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then 'found data or destination address with matching transaction value
+                                'get address sequence no
+                                Dim rowbarray As Byte()
+                                rowbarray = ToByteArray(Trim(vouts(i).scriptPubKey.addresses(0).ToString))
+                                'add to table
+                                outputs.Rows.Add(Trim(vouts(i).scriptPubKey.addresses(0).ToString), vouts(i).value, rowbarray(1))
+                            End If
+                        Catch e As Exception
+                            MsgBox("Exception thrown enumerating outputs: " & Trim(vouts(i).scriptPubKey.addresses(0).ToString) & " : " & e.Message)
+                        End Try
+                    Next
+                    'order the packets
+                    outputs.DefaultView.Sort = "Seqnum"
+                    Dim output(3) As String
+                    Dim outputseq(3) As Integer
+                    Dim txdataaddress As String
+                    Dim txrefaddress As String
+                    Dim txchangeaddress As String
+                    isvalidtx = False
+                    If outputs.Rows.Count > 0 And outputs.Rows.Count < 4 Then 'we have data to work with
+                        '### first see if change is easy to detect and drop it from outputs
+                        Dim exooutputamounts As Integer = 0
+                        Dim nonexooutputamounts As Integer = 0
+                        Dim changeoutput As Integer
+                        For i = 0 To outputs.Rows.Count - 1
+                            If outputs.Rows(i).Item(1) = exoamount Then
+                                exooutputamounts = exooutputamounts + 1
+                            Else
+                                nonexooutputamounts = nonexooutputamounts + 1
+                                changeoutput = i
+                            End If
+                        Next
+                        If exooutputamounts = 2 And nonexooutputamounts = 1 Then 'two the same as exodus amount and one odd one out - we can drop the change output
+                            outputs.Rows(changeoutput).Delete()
                         End If
-                        If vouts(i).scriptPubKey.type = "pubkeyhash" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then 'found data or destination address with matching transaction value
-                            'get address sequence no
-                            Dim rowbarray As Byte()
-                            rowbarray = ToByteArray(Trim(vouts(i).scriptPubKey.addresses(0).ToString))
-                            'add to table
-                            outputs.Rows.Add(Trim(vouts(i).scriptPubKey.addresses(0).ToString), vouts(i).value, rowbarray(1))
 
-                        End If
-                    Catch e As Exception
-                        MsgBox("Exception thrown : " & e.Message)
-                    End Try
-                Next
-                'order the packets
-                outputs.DefaultView.Sort = "Seqnum"
-                Dim isvalidtx As Boolean
-                Dim output(3) As String
-                Dim outputseq(3) As Integer
-                Dim txdataaddress As String
-                Dim txrefaddress As String
-                Dim txchangeaddress As String
-                isvalidtx = False
+                        Dim outid As Integer = 1
+                        For Each row In outputs.DefaultView
+                            outputseq(outid) = row("Seqnum")
+                            output(outid) = row("Address")
+                            outid = outid + 1
+                        Next
 
-                Dim outid As Integer = 1
-                For Each row In outputs.DefaultView
-                    outputseq(outid) = row("Seqnum")
-                    output(outid) = row("Address")
-                    outid = outid + 1
-                Next
+                        If multisig = True Then
+                            '/// multisig
+                            '1 remaining output
+                            If outputs.Rows.Count = 1 Then
+                                txrefaddress = outputs.Rows(0).Item(0)
+                                isvalidtx = True
+                            End If
+                            '2 remaining outputs
+                            If outputs.Rows.Count = 2 Then
+                                If output(1) = txinputadd(txhighvalue) Then 'txinputadd(txhighvalue) is the from address
+                                    txchangeaddress = output(1)
+                                    txrefaddress = output(2)
+                                    isvalidtx = True
+                                End If
+                                If output(2) = txinputadd(txhighvalue) Then
+                                    txchangeaddress = output(2)
+                                    txrefaddress = output(1)
+                                    isvalidtx = True
+                                End If
+                                'otherwise ambiguous
+                            End If
+                        Else
+                            '/// non-multisig
+                            '2 remaining outputs
+                            If outputs.Rows.Count = 2 Then
+                                If outputseq(2) - outputseq(1) = 1 Then
+                                    txdataaddress = output(1)
+                                    txrefaddress = output(2)
+                                    isvalidtx = True
+                                End If
+                                'handle 255
+                                If (outputseq(2) = 255 And outputseq(1) = 0) Then
+                                    txdataaddress = output(2)
+                                    txrefaddress = output(1)
+                                    isvalidtx = True
+                                End If
+                            End If
+                            '3 remaining outputs
+                            If outputs.Rows.Count = 3 Then
+                                If outputseq(2) - outputseq(1) = 1 And outputseq(3) - outputseq(2) <> 1 Then
+                                    txdataaddress = output(1)
+                                    txrefaddress = output(2)
+                                    txchangeaddress = output(3)
+                                    isvalidtx = True
+                                End If
+                                If outputseq(3) - outputseq(2) = 1 And outputseq(2) - outputseq(1) <> 1 Then
+                                    txdataaddress = output(2)
+                                    txrefaddress = output(3)
+                                    txchangeaddress = output(1)
+                                    isvalidtx = True
+                                End If
+                                'handle 255
+                                If (outputseq(3) = 255 And outputseq(1) = 0) And (outputseq(2) - outputseq(1) <> 1 And outputseq(3) - outputseq(2) <> 1) Then
+                                    txdataaddress = output(3)
+                                    txrefaddress = output(1)
+                                    txchangeaddress = output(2)
+                                    isvalidtx = True
+                                End If
+                            End If
+                            If isvalidtx = False Then  '### fall back to peek and decode
+                                'peek and decode routine here
+                            End If
+                        End If
 
-                If multisig = True Then
-                    '/// multisig
-                    '1 remaining output
-                    If outputs.Rows.Count = 1 Then
-                        txrefaddress = outputs.Rows(0).Item(0)
-                        isvalidtx = True
-                    End If
-                    '2 remaining outputs
-                    If outputs.Rows.Count = 2 Then
-                        If output(1) = txinputadd(txhighvalue) Then
-                            txchangeaddress = output(1)
-                            txrefaddress = output(2)
-                            isvalidtx = True
-                        End If
-                        If output(2) = txinputadd(txhighvalue) Then
-                            txchangeaddress = output(2)
-                            txrefaddress = output(1)
-                            isvalidtx = True
-                        End If
-                        'otherwise ambiguous
-                    End If
-                Else
-                    '/// non-multisig
-                    '2 remaining outputs
-                    If outputs.Rows.Count = 2 Then
-                        If outputseq(2) - outputseq(1) = 1 Then
-                            txdataaddress = output(1)
-                            txrefaddress = output(2)
-                            isvalidtx = True
-                        End If
-                        'handle 255
-                        If (outputseq(2) = 255 And outputseq(1) = 0) Then
-                            txdataaddress = output(2)
-                            txrefaddress = output(1)
-                            isvalidtx = True
-                        End If
-                    End If
-                    '3 remaining outputs
-                    If outputs.Rows.Count = 3 Then
-                        If outputseq(2) - outputseq(1) = 1 And outputseq(3) - outputseq(2) <> 1 Then
-                            txdataaddress = output(1)
-                            txrefaddress = output(2)
-                            txchangeaddress = output(3)
-                            isvalidtx = True
-                        End If
-                        If outputseq(3) - outputseq(2) = 1 And outputseq(2) - outputseq(1) <> 1 Then
-                            txdataaddress = output(2)
-                            txrefaddress = output(3)
-                            txchangeaddress = output(1)
-                            isvalidtx = True
-                        End If
-                        'handle 255
-                        If (outputseq(3) = 255 And outputseq(1) = 0) And (outputseq(2) - outputseq(1) <> 1 And outputseq(3) - outputseq(2) <> 1) Then
-                            txdataaddress = output(3)
-                            txrefaddress = output(1)
-                            txchangeaddress = output(2)
-                            isvalidtx = True
-                        End If
-                    End If
-                End If
+                        'is tx valid? 
+                        If isvalidtx = True Then
 
-                'is tx valid? 
-                If isvalidtx = True Then
+                            'decode transaction
+                            Dim barray As Byte()
+                            'multisig?
+                            If multisig = True Then
+                                Dim cleartext As String = decryptmastercoinpacket(txinputadd(txhighvalue), pubkeyhex.Substring(2, 62))
+                                cleartext = "02" & cleartext
+                                barray = multisigbarray(cleartext)
+                            Else 'not multisig
+                                barray = ToByteArray(Trim(txdataaddress))
+                            End If
+                            Dim transbytes() As Byte = {barray(2), barray(3), barray(4), barray(5)}
+                            Dim curidbytes() As Byte = {barray(6), barray(7), barray(8), barray(9)}
+                            Dim amountbytes() As Byte = {barray(10), barray(11), barray(12), barray(13), barray(14), barray(15), barray(16), barray(17)}
+                            'handle endianness
+                            If BitConverter.IsLittleEndian = True Then
+                                Array.Reverse(transbytes)
+                                Array.Reverse(curidbytes)
+                                Array.Reverse(amountbytes)
+                            End If
 
-                    'decode transaction
-                    Dim barray As Byte()
-                    'multisig?
-                    If multisig = True Then
-                        barray = multisigbarray(pubkeyhex)
-                    Else 'not multisig
-                        barray = ToByteArray(Trim(txdataaddress))
-                    End If
-                    Dim transbytes() As Byte = {barray(2), barray(3), barray(4), barray(5)}
-                    Dim curidbytes() As Byte = {barray(6), barray(7), barray(8), barray(9)}
-                    Dim amountbytes() As Byte = {barray(10), barray(11), barray(12), barray(13), barray(14), barray(15), barray(16), barray(17)}
-                    'handle endianness
-                    If BitConverter.IsLittleEndian = True Then
-                        Array.Reverse(transbytes)
-                        Array.Reverse(curidbytes)
-                        Array.Reverse(amountbytes)
-                    End If
-
-                    If BitConverter.ToUInt32(transbytes, 0) = 0 Then
-                        Dim returnobj As New mastercointx
-                        returnobj.blocktime = tx.result.blocktime
-                        returnobj.fromadd = txinputadd(txhighvalue)
-                        returnobj.toadd = txrefaddress
-                        returnobj.txid = tx.result.txid
-                        returnobj.type = "simple"
-                        returnobj.curtype = BitConverter.ToUInt32(curidbytes, 0)
-                        returnobj.valid = 0
-                        returnobj.value = BitConverter.ToUInt64(amountbytes, 0)
-                        Return returnobj
+                            If BitConverter.ToUInt32(transbytes, 0) = 0 Then
+                                Dim returnobj As New mastercointx
+                                returnobj.blocktime = tx.result.blocktime
+                                returnobj.fromadd = txinputadd(txhighvalue)
+                                returnobj.toadd = txrefaddress
+                                returnobj.txid = tx.result.txid
+                                returnobj.type = "simple"
+                                returnobj.curtype = BitConverter.ToUInt32(curidbytes, 0)
+                                returnobj.valid = 0
+                                returnobj.value = BitConverter.ToUInt64(amountbytes, 0)
+                                Return returnobj
+                            End If
+                        End If
                     End If
                 End If
             End If
         End If
+    End Function
+    Public Function decryptmastercoinpacket(ByVal fromadd As String, pubkeyhex As String)
+        Dim shahash As String = sha256hash(fromadd)
+        Dim cleartext As String
+        Dim a As Short
+        For a = 1 To 61 Step 2
+            Dim byte1 As Byte = Convert.ToByte(Mid(shahash, (a), 2), 16)
+            Dim byte2 As Byte = Convert.ToByte(Mid(pubkeyhex, (a), 2), 16)
+            cleartext = cleartext & (byte1 Xor byte2).ToString("X2")
+        Next
+        Return cleartext
+    End Function
+    Public Function encryptmastercoinpacket(ByVal fromadd As String, seqnum As Integer, pubkeyhex As String)
+        Dim shahash As String = fromadd
+        Dim obfuscated As String
+        For i = 1 To seqnum
+            shahash = sha256hash(shahash)
+        Next
+        Dim a As Short
+        For a = 1 To 61 Step 2
+            Dim byte1 As Byte = Convert.ToByte(Mid(shahash, (a), 2), 16)
+            Dim byte2 As Byte = Convert.ToByte(Mid(pubkeyhex, (a), 2), 16)
+            obfuscated = obfuscated & (byte1 Xor byte2).ToString("X2")
+        Next
+        Return obfuscated
+    End Function
+    Public Function sha256hash(ByVal text As String)
+        Dim bytes As Byte() = Encoding.UTF8.GetBytes(text)
+        Dim sha256prov As HashAlgorithm = New SHA256CryptoServiceProvider()
+        Dim hashbytes As Byte() = sha256prov.ComputeHash(bytes)
+        Dim hash As New StringBuilder
+        For Each b As Byte In hashbytes
+            hash.AppendFormat("{0:X2}", b)
+        Next
+        Return hash.ToString()
+    End Function
+    Public Function getrandombyte()
+        Dim s As String = "1234567890ABCDEF"
+        Dim r As New Random
+        Dim sb As New StringBuilder
+        For i As Integer = 1 To 2
+            Dim idx As Integer = r.Next(0, 16)
+            sb.Append(s.Substring(idx, 1))
+        Next
+        Return sb.ToString
     End Function
     Public Function encodetx(ByVal bitcoin_con As bitcoinrpcconnection, ByVal fromadd As String, ByVal toadd As String, ByVal curtype As Integer, ByVal amount As Long)
         Dim txhex, fromtxid As String
@@ -569,13 +638,29 @@ Public Class mlib
         Dim txfee As Long = 6000
         Dim totaltxfee As Long = 50000 'include 0.0002 miner fee
         Dim encodedpubkey, frompubkey As String
+        Dim isvalidecdsa As Boolean
 
         'calculate encoded public key for tx
-        encodedpubkey = "0201" 'compressedkey+seqnum
+        encodedpubkey = "01" 'compressedkey+seqnum
         encodedpubkey = encodedpubkey + "00000000" 'simple send
         encodedpubkey = encodedpubkey + i32tohexlittle(curtype)
         encodedpubkey = encodedpubkey + i64tohexlittle(amount)
-        encodedpubkey = encodedpubkey + "000000000000000000000000000000" 'padding
+        encodedpubkey = encodedpubkey + "0000000000000000000000000000" 'padding
+
+        'obfuscate public key
+        encodedpubkey = encryptmastercoinpacket(fromadd, 1, encodedpubkey)
+
+        'build full key
+        encodedpubkey = "02" & encodedpubkey & "00" 'last 00 will be rotated immediately
+
+        'validate ECDSA point
+        isvalidecdsa = False
+        Do While isvalidecdsa = False
+            Dim rbyte As String = getrandombyte()
+            encodedpubkey = encodedpubkey.Substring(0, 64) & rbyte
+            'isvalidecdsa = validateecdsa(encodedpubkey)
+            isvalidecdsa = True
+        Loop
 
         'get public key for from address
         Try
