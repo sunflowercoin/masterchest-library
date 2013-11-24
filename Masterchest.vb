@@ -40,6 +40,28 @@ Public Class mlib
         Public err As Object
         Public result As String
     End Class
+    Public Class mastercointx_selloffer
+        Public txid As String
+        Public fromadd As String
+        Public type As String
+        Public blocktime As Long
+        Public valid As Integer
+        Public curtype As Integer
+        Public minfee As Long
+        Public timelimit As Integer
+        Public saleamount As Long
+        Public offeramount As Long
+    End Class
+    Public Class mastercointx_acceptoffer
+        Public txid As String
+        Public toadd As String
+        Public fromadd As String
+        Public purchaseamount As Long
+        Public type As String
+        Public blocktime As Long
+        Public valid As Integer
+        Public curtype As Integer
+    End Class
     Public Class mastercointx
         Public txid As String
         Public toadd As String
@@ -183,6 +205,7 @@ Public Class mlib
         Public amount As Double
         Public uamount As Double
     End Class
+    Public cleartextpacket As String
 
     '////////////
     '///FUNCTIONS
@@ -298,7 +321,7 @@ Public Class mlib
             Return (responsestring)
         Catch e As Exception
             'exception thrown 
-            MsgBox("Exception thrown: " & e.Message.ToString)
+            MsgBox("Exception thrown in bitcoin rpc call: " & e.Message.ToString)
         End Try
     End Function
 
@@ -351,7 +374,7 @@ Public Class mlib
                             exoamount = vouts(i).value
                         End If
                     Catch e As Exception
-                        MsgBox("Exeption thrown : " & e.Message)
+                        MsgBox("Exeption thrown looping outputs : " & e.Message)
                     End Try
                 Next
 
@@ -372,7 +395,243 @@ Public Class mlib
             End If
         End If
 
-        'see if mastercoin transaction and if so decode
+        'sell offer
+        If txtype = "selloffer" Then
+            Dim txinputs As Integer
+            Dim txhighvalue As Integer
+            Dim txinputadd(1000) As String
+            Dim txinputamount(1000) As Double
+            Dim exoamount As Double
+            Dim pubkeyhex As String
+            txinputs = 0
+            'calculate input addresses 
+            Dim vins() As Vin = tx.result.vin.ToArray
+            'get inputs
+            For i = 0 To UBound(vins)
+                'loop through each vin getting txid
+                Dim vinresults As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, vins(i).txid.ToString, 1, 0))
+                Dim voutnum As Integer = vins(i).vout
+                'loop through vinresults until voutnum is located and grab address
+                Dim voutarray() As Vout = vinresults.result.vout.ToArray
+                For k = 0 To UBound(voutarray)
+                    If voutarray(k).n = voutnum Then
+                        'check we haven't seen this input address before
+                        If txinputadd.Contains(voutarray(k).scriptPubKey.addresses(0).ToString) Then
+                            'get location of address and increase amount
+                            For p = 0 To txinputs
+                                If txinputadd(p) = voutarray(k).scriptPubKey.addresses(0).ToString Then
+                                    txinputamount(p) = txinputamount(p) + voutarray(k).value
+                                    If txinputamount(p) > txinputamount(txhighvalue) Then txhighvalue = p
+                                End If
+                            Next
+                        Else
+                            txinputs = txinputs + 1
+                            txinputamount(txinputs) = voutarray(k).value
+                            If txinputamount(txinputs) > txinputamount(txhighvalue) Then txhighvalue = txinputs
+                            txinputadd(txinputs) = voutarray(k).scriptPubKey.addresses(0).ToString
+                        End If
+                    End If
+                Next
+            Next
+            If txinputs > 0 Then
+                Dim vouts() As Vout = tx.result.vout.ToArray
+                If UBound(vouts) > 0 Then 'we have outputs to work if
+                    'loop through and get the data pubkeys
+                    Dim outputs As New DataTable
+                    outputs.Columns.Add("pubkeys", GetType(String))
+
+                    For i = 0 To UBound(vouts)
+                        Try
+                            If vouts(i).scriptPubKey.type = "multisig" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
+                                Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
+                                If asmvars.Count = 5 Then
+                                    outputs.Rows.Add(asmvars(2))
+                                End If
+                                If asmvars.Count = 6 Then
+                                    outputs.Rows.Add(asmvars(2))
+                                    outputs.Rows.Add(asmvars(3))
+                                End If
+                            End If
+                        Catch e As Exception
+                            MsgBox("Exception thrown enumerating outputs: " & Trim(vouts(i).scriptPubKey.addresses(0).ToString) & " : " & e.Message)
+                        End Try
+                    Next
+                    isvalidtx = False
+                    If outputs.Rows.Count > 0 And outputs.Rows.Count < 3 Then 'we have data to work with
+                        '/// multisig
+                        '1 remaining output
+                        If outputs.Rows.Count = 1 Then
+                            cleartextpacket = decryptmastercoinpacket(txinputadd(txhighvalue), 1, outputs.Rows(0).Item(0).ToString.Substring(2, 62))
+                            isvalidtx = True
+                        End If
+                        '2 remaining outputs
+                        If outputs.Rows.Count = 2 Then
+                            cleartextpacket = decryptmastercoinpacket(txinputadd(txhighvalue), 1, outputs.Rows(0).Item(0).ToString.Substring(2, 62))
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 2, outputs.Rows(1).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            'MsgBox(cleartextpacket)
+                            isvalidtx = True
+                            'otherwise ambiguous
+                        End If
+                    Else
+                        If isvalidtx = False Then  '### fall back to peek and decode
+                            'peek and decode routine here
+                        End If
+                    End If
+
+                    'is tx valid? 
+                    If isvalidtx = True Then
+                        'decode transaction
+                        Dim barray As Byte()
+                        barray = multisigbarray(cleartextpacket)
+                        Dim transbytes() As Byte = {barray(1), barray(2), barray(3), barray(4)}
+                        Dim curidbytes() As Byte = {barray(5), barray(6), barray(7), barray(8)}
+                        Dim saleamountbytes() As Byte = {barray(9), barray(10), barray(11), barray(12), barray(13), barray(14), barray(15), barray(16)}
+                        Dim offeramountbytes() As Byte = {barray(17), barray(18), barray(19), barray(20), barray(21), barray(22), barray(23), barray(24)}
+                        Dim timelimitbyte As Byte = barray(25)
+                        Dim minfeebytes() As Byte = {barray(26), barray(27), barray(28), barray(29), barray(30), barray(31), barray(32), barray(33)}
+
+                        'handle endianness
+                        If BitConverter.IsLittleEndian = True Then
+                            Array.Reverse(transbytes)
+                            Array.Reverse(curidbytes)
+                            Array.Reverse(saleamountbytes)
+                            Array.Reverse(offeramountbytes)
+                            Array.Reverse(minfeebytes)
+                        End If
+
+                        If BitConverter.ToUInt32(transbytes, 0) = 20 Then
+                            Dim returnobj As New mastercointx_selloffer
+
+                            returnobj.blocktime = tx.result.blocktime
+                            returnobj.fromadd = txinputadd(txhighvalue)
+                            returnobj.txid = tx.result.txid
+                            returnobj.type = "selloffer"
+                            returnobj.curtype = BitConverter.ToUInt32(curidbytes, 0)
+                            returnobj.valid = 0
+                            returnobj.saleamount = BitConverter.ToUInt64(saleamountbytes, 0)
+                            returnobj.offeramount = BitConverter.ToUInt64(offeramountbytes, 0)
+                            returnobj.timelimit = timelimitbyte
+                            returnobj.minfee = BitConverter.ToUInt64(minfeebytes, 0)
+                            Return (returnobj)
+                        End If
+                    End If
+                End If
+            End If
+        End If
+
+        'accept offer
+        If txtype = "acceptoffer" Then
+            Dim txinputs As Integer
+            Dim txhighvalue As Integer
+            Dim txinputadd(1000) As String
+            Dim txinputamount(1000) As Double
+            Dim toadd As String
+            Dim exoamount As Double
+            Dim pubkeyhex As String
+            txinputs = 0
+            'calculate input addresses 
+            Dim vins() As Vin = tx.result.vin.ToArray
+            'get inputs
+            For i = 0 To UBound(vins)
+                'loop through each vin getting txid
+                Dim vinresults As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, vins(i).txid.ToString, 1, 0))
+                Dim voutnum As Integer = vins(i).vout
+                'loop through vinresults until voutnum is located and grab address
+                Dim voutarray() As Vout = vinresults.result.vout.ToArray
+                For k = 0 To UBound(voutarray)
+                    If voutarray(k).n = voutnum Then
+                        'check we haven't seen this input address before
+                        If txinputadd.Contains(voutarray(k).scriptPubKey.addresses(0).ToString) Then
+                            'get location of address and increase amount
+                            For p = 0 To txinputs
+                                If txinputadd(p) = voutarray(k).scriptPubKey.addresses(0).ToString Then
+                                    txinputamount(p) = txinputamount(p) + voutarray(k).value
+                                    If txinputamount(p) > txinputamount(txhighvalue) Then txhighvalue = p
+                                End If
+                            Next
+                        Else
+                            txinputs = txinputs + 1
+                            txinputamount(txinputs) = voutarray(k).value
+                            If txinputamount(txinputs) > txinputamount(txhighvalue) Then txhighvalue = txinputs
+                            txinputadd(txinputs) = voutarray(k).scriptPubKey.addresses(0).ToString
+                        End If
+                    End If
+                Next
+            Next
+            If txinputs > 0 Then
+                Dim vouts() As Vout = tx.result.vout.ToArray
+                If UBound(vouts) > 0 Then 'we have outputs to work if
+                    'loop through and get the data pubkeys
+                    Dim outputs As New DataTable
+                    Dim pubkeys As New DataTable
+                    outputs.Columns.Add("address", GetType(String))
+                    pubkeys.Columns.Add("pubkey", GetType(String))
+                    For i = 0 To UBound(vouts)
+                        Try
+                            If vouts(i).scriptPubKey.type = "pubkeyhash" And vouts(i).scriptPubKey.addresses(0).ToString <> txinputadd(txhighvalue) And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then 'found destination address
+                                outputs.Rows.Add(Trim(vouts(i).scriptPubKey.addresses(0).ToString))
+                            End If
+                            If vouts(i).scriptPubKey.type = "multisig" And vouts(i).scriptPubKey.addresses(0).ToString <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
+                                Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
+                                If asmvars.Count = 5 Then
+                                    pubkeys.Rows.Add(asmvars(2))
+                                End If
+                            End If
+                        Catch e As Exception
+                            MsgBox("Exception thrown enumerating outputs: " & Trim(vouts(i).scriptPubKey.addresses(0).ToString) & " : " & e.Message)
+                        End Try
+                    Next
+                    isvalidtx = False
+                    If outputs.Rows.Count = 1 Then 'there should only be one pubkeyhash output after we've removed exodus and change (sender)
+                        If pubkeys.Rows.Count > 0 And pubkeys.Rows.Count < 2 Then 'we have data to work with
+                            '/// multisig
+                            '1 remaining output
+                            If pubkeys.Rows.Count = 1 Then
+                                cleartextpacket = decryptmastercoinpacket(txinputadd(txhighvalue), 1, pubkeys.Rows(0).Item(0).ToString.Substring(2, 62))
+                                isvalidtx = True
+                            End If
+                        Else
+                            If isvalidtx = False Then  '### fall back to peek and decode
+                                'peek and decode routine here
+                            End If
+                        End If
+
+                        'is tx valid? 
+                        If isvalidtx = True Then
+                            'decode transaction
+                            Dim barray As Byte()
+                            barray = multisigbarray(cleartextpacket)
+                            Dim transbytes() As Byte = {barray(1), barray(2), barray(3), barray(4)}
+                            Dim curidbytes() As Byte = {barray(5), barray(6), barray(7), barray(8)}
+                            Dim purchaseamountbytes() As Byte = {barray(9), barray(10), barray(11), barray(12), barray(13), barray(14), barray(15), barray(16)}
+
+                            'handle endianness
+                            If BitConverter.IsLittleEndian = True Then
+                                Array.Reverse(transbytes)
+                                Array.Reverse(curidbytes)
+                                Array.Reverse(purchaseamountbytes)
+                            End If
+
+                            If BitConverter.ToUInt32(transbytes, 0) = 22 Then
+                                Dim returnobj As New mastercointx_acceptoffer
+
+                                returnobj.blocktime = tx.result.blocktime
+                                returnobj.fromadd = txinputadd(txhighvalue)
+                                returnobj.toadd = outputs.Rows(0).Item(0)
+                                returnobj.txid = tx.result.txid
+                                returnobj.type = "acceptoffer"
+                                returnobj.curtype = BitConverter.ToUInt32(curidbytes, 0)
+                                returnobj.valid = 0
+                                returnobj.purchaseamount = BitConverter.ToUInt64(purchaseamountbytes, 0)
+                                Return (returnobj)
+                            End If
+                        End If
+                    End If
+                End If
+            End If
+        End If
+
+        'simple send
         If txtype = "send" Then
             Dim txinputs As Integer
             Dim txhighvalue As Integer
@@ -551,7 +810,7 @@ Public Class mlib
                             Dim barray As Byte()
                             'multisig?
                             If multisig = True Then
-                                Dim cleartext As String = decryptmastercoinpacket(txinputadd(txhighvalue), pubkeyhex.Substring(2, 62))
+                                Dim cleartext As String = decryptmastercoinpacket(txinputadd(txhighvalue), 1, pubkeyhex.Substring(2, 62))
                                 cleartext = "02" & cleartext
                                 barray = multisigbarray(cleartext)
                             Else 'not multisig
@@ -585,8 +844,11 @@ Public Class mlib
             End If
         End If
     End Function
-    Public Function decryptmastercoinpacket(ByVal fromadd As String, pubkeyhex As String)
-        Dim shahash As String = sha256hash(fromadd)
+    Public Function decryptmastercoinpacket(ByVal fromadd As String, ByVal seqnum As Integer, ByVal pubkeyhex As String)
+        Dim shahash As String = fromadd
+        For i = 1 To seqnum
+            shahash = sha256hash(shahash)
+        Next
         Dim cleartext As String
         Dim a As Short
         For a = 1 To 61 Step 2
@@ -620,6 +882,30 @@ Public Class mlib
         Next
         Return hash.ToString()
     End Function
+    Public Function validateecdsa(ByVal pubkey As String)
+        Dim validpoint As Boolean = False
+        'check ecdsa validity
+        Try
+            Dim barray As Byte() = multisigbarray(pubkey)
+            Dim ps = Org.BouncyCastle.Asn1.Sec.SecNamedCurves.GetByName("secp256k1")
+            Dim point = ps.Curve.DecodePoint(barray)
+
+            Dim ysquared = point.Y.Multiply(point.Y)
+            Dim xcubed = point.X.Multiply(point.X).Multiply(point.X)
+            Dim xcurvea = point.X.Multiply(ps.Curve.A)
+            Dim final = xcubed.Add(xcurvea).Add(ps.Curve.B)
+            If ysquared.Equals(final) Then
+                Return True
+            Else
+                Return False
+            End If
+
+        Catch e As Exception
+            Return False
+        End Try
+
+    End Function
+
     Public Function getrandombyte()
         Dim s As String = "1234567890ABCDEF"
         Dim r As New Random
@@ -658,8 +944,7 @@ Public Class mlib
         Do While isvalidecdsa = False
             Dim rbyte As String = getrandombyte()
             encodedpubkey = encodedpubkey.Substring(0, 64) & rbyte
-            'isvalidecdsa = validateecdsa(encodedpubkey)
-            isvalidecdsa = True
+            isvalidecdsa = validateecdsa(encodedpubkey)
         Loop
 
         'get public key for from address
@@ -676,7 +961,7 @@ Public Class mlib
                 End If
             End If
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            MsgBox("Exeption thrown validating key: " & e.Message)
         End Try
         If frompubkey = "" Then
             MsgBox("Error locating public key for from address.")
@@ -738,6 +1023,238 @@ Public Class mlib
         Return txhex
     End Function
 
+    Public Function encodeselltx(ByVal bitcoin_con As bitcoinrpcconnection, ByVal fromadd As String, ByVal curtype As Integer, ByVal saleamount As Long, ByVal offeramount As Long, ByVal minfee As Long, ByVal timelimit As Integer)
+        Dim txhex, fromtxid As String
+        Dim fromtxvout As Integer = -1
+        Dim fromtxamount As Double = -1
+        Dim changeamount As Long
+        Dim txfee As Long = 6000
+        Dim totaltxfee As Long = 50000 'include 0.0002 miner fee
+        Dim encodedpubkey, encodedpubkey2, frompubkey As String
+        Dim isvalidecdsa As Boolean
+        Dim minfeestr, timelimitstr As String
+
+        'first pubkey
+        encodedpubkey = "01" 'compressedkey+seqnum
+        encodedpubkey = encodedpubkey + "00000014" 'simple send
+        encodedpubkey = encodedpubkey + i32tohexlittle(curtype)
+        encodedpubkey = encodedpubkey + i64tohexlittle(saleamount)
+        encodedpubkey = encodedpubkey + i64tohexlittle(offeramount)
+        timelimitstr = Conversion.Hex(timelimit)
+        If Len(timelimitstr) = 1 Then timelimitstr = "0" & timelimitstr
+        encodedpubkey = encodedpubkey + timelimitstr
+        minfeestr = i64tohexlittle(minfee)
+        encodedpubkey = encodedpubkey + minfeestr.Substring(0, 10)
+
+        'second pubkey
+        encodedpubkey2 = "02" 'compressedkey+seqnum
+        encodedpubkey2 = encodedpubkey2 + minfeestr.Substring(10, 6)
+        encodedpubkey2 = encodedpubkey2 + "00000000000000000000000000000000000000000000000000000000" 'padding
+
+        'obfuscate public keys
+        encodedpubkey = encryptmastercoinpacket(fromadd, 1, encodedpubkey)
+        encodedpubkey2 = encryptmastercoinpacket(fromadd, 2, encodedpubkey2)
+
+        'build full keys
+        encodedpubkey = "02" & encodedpubkey & "00" 'last 00 will be rotated immediately
+        encodedpubkey2 = "02" & encodedpubkey2 & "00" 'last 00 will be rotated immediately
+
+
+        'validate ECDSA points
+        isvalidecdsa = False
+        Do While isvalidecdsa = False
+            Dim rbyte As String = getrandombyte()
+            encodedpubkey = encodedpubkey.Substring(0, 64) & rbyte
+            isvalidecdsa = validateecdsa(encodedpubkey)
+        Loop
+
+        isvalidecdsa = False
+        Do While isvalidecdsa = False
+            Dim rbyte As String = getrandombyte()
+            encodedpubkey2 = encodedpubkey2.Substring(0, 64) & rbyte
+            isvalidecdsa = validateecdsa(encodedpubkey2)
+        Loop
+
+        'get public key for from address
+        Try
+            Dim validate As validate = JsonConvert.DeserializeObject(Of validate)(rpccall(bitcoin_con, "validateaddress", 1, fromadd, 0, 0))
+            frompubkey = validate.result.pubkey
+            If validate.result.iscompressed = False Then
+                'compress public key
+                frompubkey = frompubkey.Substring(2, 128)
+                If Val(Right(frompubkey, 1)) Mod 2 Then
+                    frompubkey = "03" & Left(frompubkey, 64)
+                Else
+                    frompubkey = "02" & Left(frompubkey, 64)
+                End If
+            End If
+        Catch e As Exception
+            MsgBox("Exeption thrown validating key: " & e.Message)
+        End Try
+        If frompubkey = "" Then
+            MsgBox("Error locating public key for from address.")
+            Exit Function
+        End If
+
+        'lookup unspent for from address
+        Dim listunspent As unspent = JsonConvert.DeserializeObject(Of unspent)(rpccall(bitcoin_con, "listunspent", 2, 1, 999999, 0))
+        Dim inputs() As result_unspent = listunspent.result.ToArray
+        For i = 0 To UBound(inputs)
+            If (inputs(i).amount * 100000000) > totaltxfee And inputs(i).address = fromadd Then
+                fromtxid = inputs(i).txid
+                fromtxvout = inputs(i).vout
+                fromtxamount = inputs(i).amount
+            End If
+        Next
+        If fromtxid = "" Or fromtxvout < 0 Or fromtxamount < 0 Then
+            MsgBox("Insufficient funds for fee at from address.")
+            Exit Function
+        End If
+
+        'handle change
+        changeamount = (fromtxamount * 100000000) - totaltxfee
+
+        'build tx hex raw
+        txhex = "01000000" 'version
+        txhex = txhex & "01" 'vin count
+        txhex = txhex & txidtohex(fromtxid) 'input txid hex
+        txhex = txhex & i32tohex(fromtxvout) 'input vout 00000000
+        txhex = txhex & "00" 'scriptsig length
+        txhex = txhex & "ffffffff" 'sequence
+
+        txhex = txhex & "03" 'number of vouts, future: cater for 3 outs (no change) - since we check txin for >totaltxfee there will always be change for now
+
+        'change output
+        txhex = txhex & i64tohex(changeamount) 'changeamount value
+        txhex = txhex & "19" 'length - 25 bytes
+        txhex = txhex & "76a914" & addresstopubkey(fromadd) & "88ac" 'change scriptpubkey
+        'exodus output
+        txhex = txhex & i64tohex(txfee)
+        txhex = txhex & "19"
+        txhex = txhex & "76a914946cb2e08075bcbaf157e47bcb67eb2b2339d24288ac" 'exodus scriptpubkey
+
+        'multisig output
+        txhex = txhex & i64tohex(txfee * 3)
+        txhex = txhex & "69" 'length - ??bytes?? calculate
+        txhex = txhex & "51" '???
+        txhex = txhex & "21" '???
+        txhex = txhex & frompubkey 'first multisig address
+        txhex = txhex & "21" '???
+        txhex = txhex & encodedpubkey 'second multisig address
+        txhex = txhex & "21" '???
+        txhex = txhex & encodedpubkey2 'third multisig address
+        txhex = txhex & "53ae" '???
+        txhex = txhex & "00000000" 'locktime
+        txhex = LCase(txhex)
+        Return txhex
+    End Function
+    Public Function encodeaccepttx(ByVal bitcoin_con As bitcoinrpcconnection, ByVal fromadd As String, ByVal toadd As String, ByVal curtype As Integer, ByVal purchaseamount As Long)
+        Dim txhex, fromtxid As String
+        Dim fromtxvout As Integer = -1
+        Dim fromtxamount As Double = -1
+        Dim changeamount As Long
+        Dim txfee As Long = 6000
+        Dim totaltxfee As Long = 50000 'include 0.0002 miner fee
+        Dim encodedpubkey, frompubkey As String
+        Dim isvalidecdsa As Boolean
+
+        'calculate encoded public key for tx
+        encodedpubkey = "01" 'compressedkey+seqnum
+        encodedpubkey = encodedpubkey + "00000016" 'simple send
+        encodedpubkey = encodedpubkey + i32tohexlittle(curtype)
+        encodedpubkey = encodedpubkey + i64tohexlittle(purchaseamount)
+        encodedpubkey = encodedpubkey + "0000000000000000000000000000" 'padding
+
+        'obfuscate public key
+        encodedpubkey = encryptmastercoinpacket(fromadd, 1, encodedpubkey)
+
+        'build full key
+        encodedpubkey = "02" & encodedpubkey & "00" 'last 00 will be rotated immediately
+
+        'validate ECDSA point
+        isvalidecdsa = False
+        Do While isvalidecdsa = False
+            Dim rbyte As String = getrandombyte()
+            encodedpubkey = encodedpubkey.Substring(0, 64) & rbyte
+            isvalidecdsa = validateecdsa(encodedpubkey)
+        Loop
+
+        'get public key for from address
+        Try
+            Dim validate As validate = JsonConvert.DeserializeObject(Of validate)(rpccall(bitcoin_con, "validateaddress", 1, fromadd, 0, 0))
+            frompubkey = validate.result.pubkey
+            If validate.result.iscompressed = False Then
+                'compress public key
+                frompubkey = frompubkey.Substring(2, 128)
+                If Val(Right(frompubkey, 1)) Mod 2 Then
+                    frompubkey = "03" & Left(frompubkey, 64)
+                Else
+                    frompubkey = "02" & Left(frompubkey, 64)
+                End If
+            End If
+        Catch e As Exception
+            MsgBox("Exeption thrown validating key: " & e.Message)
+        End Try
+        If frompubkey = "" Then
+            MsgBox("Error locating public key for from address.")
+            Exit Function
+        End If
+
+        'lookup unspent for from address
+        Dim listunspent As unspent = JsonConvert.DeserializeObject(Of unspent)(rpccall(bitcoin_con, "listunspent", 2, 1, 999999, 0))
+        Dim inputs() As result_unspent = listunspent.result.ToArray
+        For i = 0 To UBound(inputs)
+            If (inputs(i).amount * 100000000) > totaltxfee And inputs(i).address = fromadd Then
+                fromtxid = inputs(i).txid
+                fromtxvout = inputs(i).vout
+                fromtxamount = inputs(i).amount
+            End If
+        Next
+        If fromtxid = "" Or fromtxvout < 0 Or fromtxamount < 0 Then
+            MsgBox("Insufficient funds for fee at from address.")
+            Exit Function
+        End If
+
+        'handle change
+        changeamount = (fromtxamount * 100000000) - totaltxfee
+
+        'build tx hex raw
+        txhex = "01000000" 'version
+        txhex = txhex & "01" 'vin count
+        txhex = txhex & txidtohex(fromtxid) 'input txid hex
+        txhex = txhex & i32tohex(fromtxvout) 'input vout 00000000
+        txhex = txhex & "00" 'scriptsig length
+        txhex = txhex & "ffffffff" 'sequence
+
+        txhex = txhex & "04" 'number of vouts, future: cater for 3 outs (no change) - since we check txin for >totaltxfee there will always be change for now
+
+        'change output
+        txhex = txhex & i64tohex(changeamount) 'changeamount value
+        txhex = txhex & "19" 'length - 25 bytes
+        txhex = txhex & "76a914" & addresstopubkey(fromadd) & "88ac" 'change scriptpubkey
+        'exodus output
+        txhex = txhex & i64tohex(txfee)
+        txhex = txhex & "19"
+        txhex = txhex & "76a914946cb2e08075bcbaf157e47bcb67eb2b2339d24288ac" 'exodus scriptpubkey
+        'reference/destination output
+        txhex = txhex & i64tohex(txfee)
+        txhex = txhex & "19"
+        txhex = txhex & "76a914" & addresstopubkey(toadd) & "88ac" 'data scriptpubkey 
+
+        'multisig output
+        txhex = txhex & i64tohex(txfee * 2)
+        txhex = txhex & "47" 'length - ??bytes?? calculate
+        txhex = txhex & "51" '???
+        txhex = txhex & "21" '???
+        txhex = txhex & frompubkey 'first multisig address
+        txhex = txhex & "21" '???
+        txhex = txhex & encodedpubkey 'second multisig address
+        txhex = txhex & "52ae" '???
+        txhex = txhex & "00000000" 'locktime
+        txhex = LCase(txhex)
+        Return txhex
+    End Function
+
     Public Function getaddresses(ByVal bitcoin_con As bitcoinrpcconnection)
         Dim addresslist As New List(Of btcaddressbal)
         Dim plainaddresslist As New List(Of String)
@@ -781,7 +1298,7 @@ Public Class mlib
             Dim block As Block = JsonConvert.DeserializeObject(Of Block)(rpccall(bitcoin_con, "getblock", 1, blockhash, 1, 0))
             Return block
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            MsgBox("Exeption thrown getting block : " & e.Message)
         End Try
     End Function
     Public Function getblocktemplate(ByVal bitcoin_con As bitcoinrpcconnection)
@@ -789,7 +1306,7 @@ Public Class mlib
             Dim blocktemplate As blocktemplate = JsonConvert.DeserializeObject(Of blocktemplate)(rpccall(bitcoin_con, "getblocktemplate", 0, 0, 0, 0))
             Return blocktemplate
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            MsgBox("Exeption thrown getting blocktemplate : " & e.Message)
         End Try
     End Function
     Public Function getblockcount(ByVal bitcoin_con As bitcoinrpcconnection)
@@ -801,7 +1318,7 @@ Public Class mlib
             Dim blockhash As blockhash = JsonConvert.DeserializeObject(Of blockhash)(rpccall(bitcoin_con, "getblockhash", 1, block, 1, 0))
             Return blockhash
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            MsgBox("Exeption thrown getting block hash : " & e.Message)
         End Try
     End Function
     Public Function gettransaction(ByVal bitcoin_con As bitcoinrpcconnection, ByVal txid As String)
@@ -809,24 +1326,113 @@ Public Class mlib
             Dim tx As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, txid, 1, 0))
             Return tx
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            MsgBox("Exeption throwngetting transaction (" & txid & ") : " & e.Message)
         End Try
     End Function
     Public Function ismastercointx(ByVal bitcoin_con As bitcoinrpcconnection, ByVal txid As String)
+
+        Dim tx As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, txid, 1, 0))
+        Dim vouts() As Vout = tx.result.vout.ToArray
+        Dim ismultisig As Boolean = False
+        Dim ismsc As Boolean = False
+        Dim txtype As String
+        Dim pubkeyhex As String = ""
         Try
-            Dim tx As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, txid, 1, 0))
-            Dim vouts() As Vout = tx.result.vout.ToArray
             For i = 0 To UBound(vouts)
                 If Not IsNothing(vouts(i).scriptPubKey.addresses) Then
                     If vouts(i).scriptPubKey.addresses(0).ToString = "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then
-                        Return True
-                        Exit Function
+                        ismsc = True
+                    End If
+                    'see if Class B
+                    If vouts(i).scriptPubKey.type = "multisig" Then 'we get away with using the first input to check tx type for now
+                        ismultisig = True
+                        ismsc = True
+                        Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
+                        If pubkeyhex = "" Then pubkeyhex = asmvars(2)
                     End If
                 End If
             Next
-            Return False
+
+            If ismsc = True Then
+                Dim txinputs As Integer
+                Dim txhighvalue As Integer
+                Dim txinputadd(1000) As String
+                Dim txinputamount(1000) As Double
+                Dim exoamount As Double
+                txinputs = 0
+                'calculate input addresses 
+                Dim vins() As Vin = tx.result.vin.ToArray
+                'get inputs
+                For i = 0 To UBound(vins)
+                    'loop through each vin getting txid
+                    Dim vinresults As txn = JsonConvert.DeserializeObject(Of txn)(rpccall(bitcoin_con, "getrawtransaction", 2, vins(i).txid.ToString, 1, 0))
+                    Dim voutnum As Integer = vins(i).vout
+                    'loop through vinresults until voutnum is located and grab address
+                    Dim voutarray() As Vout = vinresults.result.vout.ToArray
+                    For k = 0 To UBound(voutarray)
+                        If voutarray(k).n = voutnum Then
+                            'check we haven't seen this input address before
+                            If txinputadd.Contains(voutarray(k).scriptPubKey.addresses(0).ToString) Then
+                                'get location of address and increase amount
+                                For p = 0 To txinputs
+                                    If txinputadd(p) = voutarray(k).scriptPubKey.addresses(0).ToString Then
+                                        txinputamount(p) = txinputamount(p) + voutarray(k).value
+                                        If txinputamount(p) > txinputamount(txhighvalue) Then txhighvalue = p
+                                    End If
+                                Next
+                            Else
+                                txinputs = txinputs + 1
+                                txinputamount(txinputs) = voutarray(k).value
+                                If txinputamount(txinputs) > txinputamount(txhighvalue) Then txhighvalue = txinputs
+                                txinputadd(txinputs) = voutarray(k).scriptPubKey.addresses(0).ToString
+                            End If
+                        End If
+                    Next
+                Next
+                If txinputs > 0 Then
+                    'get tx type
+                    If ismultisig = False Then
+                        'class A, always simple send/generate
+                        Return "simple"
+                        Exit Function
+                    Else
+                        'class B, check transaction type
+                        'decode transaction
+                        Dim cleartext As String = decryptmastercoinpacket(txinputadd(txhighvalue), 1, pubkeyhex.Substring(2, 62))
+                        cleartext = "02" & cleartext
+                        Dim barray As Byte()
+                        barray = multisigbarray(cleartext)
+                        Dim transbytes() As Byte = {barray(2), barray(3), barray(4), barray(5)}
+
+                        'handle endianness
+                        If BitConverter.IsLittleEndian = True Then
+                            Array.Reverse(transbytes)
+                        End If
+
+
+                        Dim transtype As Integer = BitConverter.ToUInt32(transbytes, 0)
+                        If transtype = 0 Then
+                            Return "simple"
+                            Exit Function
+                        End If
+                        If transtype = 20 Then
+                            Return "selloffer"
+                            Exit Function
+                        End If
+                        If transtype = 22 Then
+                            Return "acceptoffer"
+                            Exit Function
+                        End If
+                    End If
+                End If
+
+
+            End If
+            Return "None"
         Catch e As Exception
-            MsgBox("Exeption thrown : " & e.Message)
+            'MsgBox("Exeption thrown checking if " & txid & " is a Mastercoin transaction: " & e.Message)
+            'Allow exception for original multisig (can't decode properly) - come back and trap this properly
+            Return "None"
         End Try
     End Function
     Public Function addresstopubkey(address As String)
