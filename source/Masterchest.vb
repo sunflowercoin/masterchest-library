@@ -461,7 +461,7 @@ Public Class mlib
                 Dim voutstring As String = ""
                 For Each Vout In tx.result.vout
                     For Each address As String In Vout.scriptPubKey.addresses
-                        If address <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" Then voutstring = voutstring & "-" & address
+                        If address <> "1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P" And Vout.scriptPubKey.type.ToString.ToLower = "pubkeyhash" Then voutstring = voutstring & "-" & address
                     Next
                 Next
 
@@ -1516,7 +1516,7 @@ Public Class mlib
                     inputsum = inputsum + (inputs(i).amount * 100000000)
                     inputcount = inputcount + 1
                     'MsgBox(inputsum)
-                    'sanity check input count is not >250
+                    'sanity check input count is not >24
                     If inputcount > 24 Then
                         MsgBox("ERROR: Input count >24, temporary restriction applied - library currently will not send transactions with over 24 inputs.  Aborting")
                         Exit Function
