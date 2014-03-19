@@ -1676,7 +1676,7 @@ Public Class mlib
                     'see if Class B
                     If vouts(i).scriptPubKey.type = "multisig" Then 'we get away with using the first input to check tx type for now
                         ismultisig = True
-                        ismsc = True
+                        'ismsc = True 'premature, currently exodus outputs are required for a transaction
                         Dim asmvars As String() = vouts(i).scriptPubKey.asm.ToString.Split(" ")
                         If pubkeyhex = "" Then pubkeyhex = asmvars(2)
                     End If
