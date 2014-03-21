@@ -291,53 +291,60 @@ Public Class mlib
     End Function
 
     Public Function rpccall(ByVal bitcoin_con, ByVal method, ByVal param0, ByVal param1, ByVal param2, ByVal param3)
-        Try
-            Dim webRequest1 As HttpWebRequest = WebRequest.Create("http://" & bitcoin_con.bitcoinrpcserver.ToString & ":" & bitcoin_con.bitcoinrpcport.ToString)
-            webRequest1.Credentials = New NetworkCredential(bitcoin_con.bitcoinrpcuser.ToString, bitcoin_con.bitcoinrpcpassword.ToString)
-            webRequest1.ContentType = "application/json-rpc"
-            webRequest1.Method = "POST"
-            Dim joe As New JObject()
-            joe.Add(New JProperty("jsonrpc", "1.0"))
-            joe.Add(New JProperty("id", "1"))
-            joe.Add(New JProperty("method", method))
-            Dim props As New JArray()
-            'add appropriate number of params (param0 is parameter count)
-            If param0 = 0 Then
-                joe.Add(New JProperty("params", New JArray()))
-            End If
-            If param0 = 1 Then
-                props.Add(param1)
-                joe.Add(New JProperty("params", props))
-            End If
-            If param0 = 2 Then
-                props.Add(param1)
-                props.Add(param2)
-                joe.Add(New JProperty("params", props))
-            End If
-            If param0 = 3 Then
-                props.Add(param1)
-                props.Add(param2)
-                props.Add(param3)
-                joe.Add(New JProperty("params", props))
-            End If
-            '// serialize json for the request
+        Dim retrycount As Integer = 0
+        While retrycount < 3
+            Try
+                Dim webRequest1 As HttpWebRequest = WebRequest.Create("http://" & bitcoin_con.bitcoinrpcserver.ToString & ":" & bitcoin_con.bitcoinrpcport.ToString)
+                webRequest1.Credentials = New NetworkCredential(bitcoin_con.bitcoinrpcuser.ToString, bitcoin_con.bitcoinrpcpassword.ToString)
+                webRequest1.ContentType = "application/json-rpc"
+                webRequest1.Method = "POST"
+                Dim joe As New JObject()
+                joe.Add(New JProperty("jsonrpc", "1.0"))
+                joe.Add(New JProperty("id", "1"))
+                joe.Add(New JProperty("method", method))
+                Dim props As New JArray()
+                'add appropriate number of params (param0 is parameter count)
+                If param0 = 0 Then
+                    joe.Add(New JProperty("params", New JArray()))
+                End If
+                If param0 = 1 Then
+                    props.Add(param1)
+                    joe.Add(New JProperty("params", props))
+                End If
+                If param0 = 2 Then
+                    props.Add(param1)
+                    props.Add(param2)
+                    joe.Add(New JProperty("params", props))
+                End If
+                If param0 = 3 Then
+                    props.Add(param1)
+                    props.Add(param2)
+                    props.Add(param3)
+                    joe.Add(New JProperty("params", props))
+                End If
+                '// serialize json for the request
 
-            Dim s As String = JsonConvert.SerializeObject(joe)
-            Dim bytearray As Byte() = Encoding.UTF8.GetBytes(s)
-            webRequest1.ContentLength = bytearray.Length
-            Dim datastream As Stream = webRequest1.GetRequestStream()
-            datastream.Write(bytearray, 0, bytearray.Length)
-            datastream.Close()
+                Dim s As String = JsonConvert.SerializeObject(joe)
+                Dim bytearray As Byte() = Encoding.UTF8.GetBytes(s)
+                webRequest1.ContentLength = bytearray.Length
+                Dim datastream As Stream = webRequest1.GetRequestStream()
+                datastream.Write(bytearray, 0, bytearray.Length)
+                datastream.Close()
 
-            Dim webResponse1 As WebResponse = webRequest1.GetResponse()
-            Dim returnstream As Stream = webResponse1.GetResponseStream()
-            Dim rreader As StreamReader = New StreamReader(returnstream, Encoding.UTF8)
-            Dim responsestring As String = rreader.ReadToEnd()
-            Return (responsestring)
-        Catch e As Exception
-            'exception thrown 
-            MsgBox("Exception thrown in bitcoin rpc call: " & e.Message.ToString)
-        End Try
+                Dim webResponse1 As WebResponse = webRequest1.GetResponse()
+                Dim returnstream As Stream = webResponse1.GetResponseStream()
+                Dim rreader As StreamReader = New StreamReader(returnstream, Encoding.UTF8)
+                Dim responsestring As String = rreader.ReadToEnd()
+                Return (responsestring)
+            Catch e As Exception
+                'retry failed connection a few times
+                retrycount = retrycount + 1
+                If retrycount > 2 Then
+                    'exception thrown 
+                    MsgBox("Exception thrown in bitcoin rpc call: " & e.Message.ToString)
+                End If
+                End Try
+        End While
     End Function
 
     Public Function getmastercointransaction(ByVal bitcoin_con As bitcoinrpcconnection, ByVal txid As String, ByVal txtype As String)
