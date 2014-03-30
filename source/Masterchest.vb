@@ -1029,7 +1029,7 @@ Public Class mlib
                         End Try
                     Next
                     isvalidtx = False
-                    If outputs.Rows.Count > 0 And outputs.Rows.Count < 5 Then 'we have data to work with
+                    If outputs.Rows.Count > 0 And outputs.Rows.Count < 7 Then 'we have data to work with
                         '/// multisig
                         'compile cleartext message
                         If outputs.Rows.Count = 1 Then
@@ -1052,6 +1052,23 @@ Public Class mlib
                             cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 2, outputs.Rows(1).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
                             cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 3, outputs.Rows(2).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
                             cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 4, outputs.Rows(3).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            isvalidtx = True
+                        End If
+                        If outputs.Rows.Count = 5 Then
+                            cleartextpacket = decryptmastercoinpacket(txinputadd(txhighvalue), 1, outputs.Rows(0).Item(0).ToString.Substring(2, 62))
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 2, outputs.Rows(1).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 3, outputs.Rows(2).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 4, outputs.Rows(3).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 5, outputs.Rows(4).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            isvalidtx = True
+                        End If
+                        If outputs.Rows.Count = 6 Then
+                            cleartextpacket = decryptmastercoinpacket(txinputadd(txhighvalue), 1, outputs.Rows(0).Item(0).ToString.Substring(2, 62))
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 2, outputs.Rows(1).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 3, outputs.Rows(2).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 4, outputs.Rows(3).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 5, outputs.Rows(4).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
+                            cleartextpacket = cleartextpacket & decryptmastercoinpacket(txinputadd(txhighvalue), 6, outputs.Rows(5).Item(0).ToString.Substring(2, 62)).Substring(2, 60)
                             isvalidtx = True
                         End If
                     End If
@@ -1737,9 +1754,10 @@ Public Class mlib
         Dim fromtxvout As Integer = -1
         Dim fromtxamount As Double = -1
         Dim changeamount As Long
-        Dim txfee As Long = 6000
+        Dim txfee As Long = 6000 '<---------------------- variable fees
+        Dim minerfee As Long = 11000 '<---------------------- variable fees
         Dim totaltxfee As Long = 35000 'include 0.00011 miner fee
-        Dim encodedpubkey, encodedpubkey2, encodedpubkey3, encodedpubkey4, frompubkey, clearpacket As String
+        Dim encodedpubkey, encodedpubkey2, encodedpubkey3, encodedpubkey4, encodedpubkey5, encodedpubkey6, frompubkey, clearpacket As String
         Dim isvalidecdsa As Boolean
         Try
             'sanity check input
@@ -1752,7 +1770,7 @@ Public Class mlib
                 Exit Function
             End If
             If IsNothing(proptype) Then proptype = 1
-            If IsNothing(previousprop) Then previousprop = 1
+            If IsNothing(previousprop) Then previousprop = 0
             If category = "" Then
                 MsgBox("Message from library - aborting transaction build, sanity check failed on category")
                 Exit Function
@@ -1792,7 +1810,7 @@ Public Class mlib
             'split into packets - find a cleaner way to do this when time allows
             Dim cleartextlength As Integer = Len(clearpacket)
             Dim packetcount As Integer = 0
-            Dim clearpacket1, clearpacket2, clearpacket3, clearpacket4 As String
+            Dim clearpacket1, clearpacket2, clearpacket3, clearpacket4, clearpacket5, clearpacket6 As String
             If cleartextlength < 61 Then 'single packet
                 packetcount = 1
                 clearpacket1 = "01" & clearpacket
@@ -1825,6 +1843,31 @@ Public Class mlib
                 'add padding to last packet
                 For i = 0 To (Len(clearpacket) - 180)
                     clearpacket4 = clearpacket4 + "0"
+                Next
+            End If
+            If cleartextlength > 241 And cleartextlength < 301 Then 'five packets
+                packetcount = 5
+                clearpacket1 = "01" & clearpacket.Substring(0, 60)
+                clearpacket2 = "02" & clearpacket.Substring(60, 60)
+                clearpacket3 = "03" & clearpacket.Substring(120, 60)
+                clearpacket4 = "04" & clearpacket.Substring(180, 60)
+                clearpacket5 = "05" & clearpacket.Substring(240, Len(clearpacket) - 240)
+                'add padding to last packet
+                For i = 0 To (Len(clearpacket) - 240)
+                    clearpacket5 = clearpacket5 + "0"
+                Next
+            End If
+            If cleartextlength > 301 And cleartextlength < 361 Then 'six packets
+                packetcount = 6
+                clearpacket1 = "01" & clearpacket.Substring(0, 60)
+                clearpacket2 = "02" & clearpacket.Substring(60, 60)
+                clearpacket3 = "03" & clearpacket.Substring(120, 60)
+                clearpacket4 = "04" & clearpacket.Substring(180, 60)
+                clearpacket5 = "05" & clearpacket.Substring(240, 60)
+                clearpacket6 = "06" & clearpacket.Substring(300, Len(clearpacket) - 300)
+                'add padding to last packet
+                For i = 0 To (Len(clearpacket) - 300)
+                    clearpacket6 = clearpacket6 + "0"
                 Next
             End If
             'obfuscate public keys, build the full keys and then validate ECDSA points
@@ -1868,6 +1911,26 @@ Public Class mlib
                     isvalidecdsa = validateecdsa(encodedpubkey4)
                 Loop
             End If
+            If packetcount > 4 Then
+                encodedpubkey5 = encryptmastercoinpacket(fromadd, 5, clearpacket5)
+                encodedpubkey5 = "02" & encodedpubkey5 & "00"
+                isvalidecdsa = False
+                Do While isvalidecdsa = False
+                    Dim rbyte As String = getrandombyte()
+                    encodedpubkey5 = encodedpubkey5.Substring(0, 64) & rbyte
+                    isvalidecdsa = validateecdsa(encodedpubkey5)
+                Loop
+            End If
+            If packetcount > 5 Then
+                encodedpubkey6 = encryptmastercoinpacket(fromadd, 6, clearpacket6)
+                encodedpubkey6 = "02" & encodedpubkey6 & "00"
+                isvalidecdsa = False
+                Do While isvalidecdsa = False
+                    Dim rbyte As String = getrandombyte()
+                    encodedpubkey6 = encodedpubkey6.Substring(0, 64) & rbyte
+                    isvalidecdsa = validateecdsa(encodedpubkey6)
+                Loop
+            End If
 
             'get public key for from address
             Try
@@ -1908,11 +1971,12 @@ Public Class mlib
 
             'raw transaction build
             'handle change
-            If packetcount = 2 Then totaltxfee = 35000
-            If packetcount = 3 Then totaltxfee = 47000
-            If packetcount = 4 Then totaltxfee = 53000
+            If packetcount = 2 Then totaltxfee = 4 * txfee + minerfee '1x exodus, 1x change, 1x multisig with 2 packets + minerfee
+            If packetcount = 3 Then totaltxfee = 6 * txfee + minerfee '2x multisig with 3 packets
+            If packetcount = 4 Then totaltxfee = 7 * txfee + minerfee '2x multisig with 4 packets
+            If packetcount = 5 Then totaltxfee = 9 * txfee + minerfee '3x multisig with 5 packets
+            If packetcount = 6 Then totaltxfee = 10 * txfee + minerfee '3x multisig with 6 packets
             changeamount = (fromtxamount * 100000000) - totaltxfee
-
             txhex = "01000000" 'version
             txhex = txhex & "01" 'vin count
             txhex = txhex & txidtohex(fromtxid) 'input txid hex
@@ -1922,6 +1986,7 @@ Public Class mlib
 
             If packetcount > 0 And packetcount < 3 Then txhex = txhex & "03" 'number of vouts, future: cater for 2 outs (no change) - since we check txin for >totaltxfee there will always be change for now
             If packetcount > 2 And packetcount < 5 Then txhex = txhex & "04" 'number of vouts, future: cater for 2 outs (no change) - since we check txin for >totaltxfee there will always be change for now
+            If packetcount > 4 And packetcount < 7 Then txhex = txhex & "05" 'number of vouts, future: cater for 2 outs (no change) - since we check txin for >totaltxfee there will always be change for now
 
             'change output
             txhex = txhex & i64tohex(changeamount) 'changeamount value
@@ -1942,7 +2007,7 @@ Public Class mlib
             txhex = txhex & "21" '???
             txhex = txhex & encodedpubkey2 'third multisig address - assuming minimum 2 packets for now
             txhex = txhex & "53ae" '???
-            If packetcount > 2 And packetcount < 5 Then
+            If packetcount > 2 Then
                 'second multisig output
                 If packetcount = 3 Then
                     txhex = txhex & i64tohex(txfee * 2)
@@ -1963,6 +2028,30 @@ Public Class mlib
                     txhex = txhex & encodedpubkey3 'second multisig address
                     txhex = txhex & "21" '???
                     txhex = txhex & encodedpubkey4 'third multisig address
+                    txhex = txhex & "53ae" '???
+                End If
+            End If
+            If packetcount > 4 Then
+                'third multisig output
+                If packetcount = 5 Then
+                    txhex = txhex & i64tohex(txfee * 2)
+                    txhex = txhex & "69" 'length - ??bytes?? calculate
+                    txhex = txhex & "51" '???
+                    txhex = txhex & "21" '???
+                    txhex = txhex & frompubkey 'first multisig address
+                    txhex = txhex & "21" '???
+                    txhex = txhex & encodedpubkey5 'second multisig address
+                    txhex = txhex & "53ae" '???
+                Else
+                    txhex = txhex & i64tohex(txfee * 3)
+                    txhex = txhex & "69" 'length - ??bytes?? calculate
+                    txhex = txhex & "51" '???
+                    txhex = txhex & "21" '???
+                    txhex = txhex & frompubkey 'first multisig address
+                    txhex = txhex & "21" '???
+                    txhex = txhex & encodedpubkey5 'second multisig address
+                    txhex = txhex & "21" '???
+                    txhex = txhex & encodedpubkey6 'third multisig address
                     txhex = txhex & "53ae" '???
                 End If
             End If
