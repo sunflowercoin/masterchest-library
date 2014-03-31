@@ -936,6 +936,7 @@ Public Class mlib
                             Array.Reverse(prevpropbytes)
                             Array.Reverse(numpropsbytes)
                             Array.Reverse(deadlinebytes)
+                            Array.Reverse(curdesbytes)
                         End If
                         If BitConverter.ToUInt16(transbytes, 0) = 51 Then
                             Dim returnobj As New mastercointx_spvar
